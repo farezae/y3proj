@@ -1,18 +1,22 @@
-import pyo 
 import numpy as np
-from pyo import *
-
-
 import pandas as pd
 import numpy as np
+
+from pyo import *
 from scipy.signal import find_peaks
 from collections import deque
+from appJar import gui 
+
 
 file_path_qrs = 'qrsdata.csv'  # Adjust the path as necessary
 qrsdata = pd.read_csv(file_path_qrs)
-
 file_path_rr='rrdata.csv'
 rrdata=pd.read_csv(file_path_rr)
+
+
+app = gui("ECG Sound Synthesis", "600x400")
+s = Server()
+s.boot().start()
 
 
 def signalProcessing(data):
@@ -97,13 +101,9 @@ q_peak_amplitudes= signalProcessing(qrsdata)[0]
 r_peak_amplitudes = signalProcessing(qrsdata)[1]
 s_peak_amplitudes =signalProcessing(qrsdata)[2]
 qrs_durations= signalProcessing(qrsdata)[3]
-
-
 rr_values=rrdata['rr_interval'].tolist()
 
 
-
-s = Server().boot().start()
 ''' binaural beat '''
 # frequencies for the binaural beat
 base_freq = 40  # base frequency in Hz 
@@ -151,10 +151,9 @@ def midiToHz(midi_note):
        
 def playQRS(melody_events):
     for note in melody_events:
-        freq = note
+        freq = midiToHz(note)
         osc = Sine(freq=freq, mul=1)
     return osc 
-
 
 
 ''' gong sounds // RR-intervals'''
@@ -162,55 +161,56 @@ rr_intervals = [value + 3.5 for value in rr_values]
 rr_mean = np.mean(rr_values)
 rr_sd = np.std(rr_values)
 
-# path to the gong sound file
-gong_file_path = "sounds/gong.wav"
+def gongSounds(rr_intervals,rr_mean,rr_sd):
+    # path to the gong sound file
+    gong_file_path = "sounds/gong.wav"
 
-# metro objects + counter definition 
-gong_met_time = SigTo(rr_intervals[0], time=float(rr_mean))
-gong_met = Metro(time=gong_met_time).out()
-beat_count = Counter(gong_met)
+    # metro objects + counter definition 
+    gong_met_time = SigTo(rr_intervals[0], time=float(rr_mean))
+    gong_met = Metro(time=gong_met_time).out()
+    beat_count = Counter(gong_met)
 
 
-# function to update Metro time
-def update_gong_met():
-    next_interval = rr_intervals[int(beat_count.get()) % len(rr_intervals)]
-    gong_met_time.setValue(next_interval)
-    gong_met.setTime(next_interval)
-    xfade.play()
-    gong_player.out()
+    # function to update Metro time
+    def update_gong_met():
+        next_interval = rr_intervals[int(beat_count.get()) % len(rr_intervals)]
+        gong_met_time.setValue(next_interval)
+        gong_met.setTime(next_interval)
+        xfade.play()
+        gong_player.out()
 
-gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
-trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
-gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4).out()
-xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+    gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
+    trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
+    xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+    return trig_update_gongmet 
 
 
 ''' chime sounds // R-peaks '''
-# path to the chime sound file
-tinkle_file_path = "sounds/tinkle.wav"
+def chimeSounds():
+    # path to the chime sound file
+    tinkle_file_path = "sounds/tinkle.wav"
 
-# metro object to trigger playbacks_tink
-chime_met_time = SigTo(value=1.75, time=0.1)  # smooth transition for metro time changes
-chime_met = Metro(time=chime_met_time ).out() 
+    # metro object to trigger playbacks_tink
+    chime_met_time = SigTo(value=1.75, time=0.1)  # smooth transition for metro time changes
+    chime_met = Metro(time=chime_met_time ).out() 
 
-# counter to iterate over r_peaks
-beat_count = Counter(chime_met, min=0, max=len(r_peak_amplitudes) - 1)
+    # counter to iterate over r_peaks
+    beat_count = Counter(chime_met, min=0, max=len(r_peak_amplitudes) - 1)
 
-# tinkle player
-tinkle_player = SfPlayer(tinkle_file_path, speed=0.75, loop=True, mul=0)
+    # tinkle player
+    tinkle_player = SfPlayer(tinkle_file_path, speed=0.75, loop=True, mul=0)
 
-# function to update amplitude based on r_peaks
-def update_chime_amplitude():
-    idx = int(beat_count.get())
-    amp = r_peak_amplitudes[idx]
-    tinkle_player.setMul(amp)  # update the amplitude
-    tinkle_player.out()
+    # function to update amplitude based on r_peaks
+    def update_chime_amplitude():
+        idx = int(beat_count.get())
+        amp = r_peak_amplitudes[idx]
+        tinkle_player.setMul(amp)  # update the amplitude
+        tinkle_player.out()
 
-trig_update_amplitude = TrigFunc(chime_met, update_chime_amplitude)
+    trig_update_amplitude = TrigFunc(chime_met, update_chime_amplitude)
+    return trig_update_amplitude 
 
 
-
-''' play sounds '''
 # play binaural beat
 binaural_leftbeat = play_leftbinaural(base_freq=40).out()
 binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
@@ -220,11 +220,16 @@ melody_events = mapping(qrs_durations, notes)
 QRS_sonified = playQRS(melody_events).out()
 
 # play gong sounds
-gong_sounds = trig_update_gongmet.out()
+gong_sounds = gongSounds(rr_intervals,rr_mean,rr_sd).out()
 
 # play chime sounds
-chime_sounds = trig_update_amplitude.out()
+chime_sounds = chimeSounds().out()
+
 s.gui(locals())
+
+    
+    
+
 
 
 

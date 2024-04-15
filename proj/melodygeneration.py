@@ -29,6 +29,7 @@ s_peaks = [0.5,0.4,0.6,0.8,0.5,0.3,0.2,0.6,0.7, 0.5, 0.8, 0.8, 0.7]
 base_freq = 40  # base frequency in Hz 
 binaural_freq = 8  # for anxiety/stress relief, alpha freq. lie between 8-13Hz
 
+#creating two slightly different sine waves for each ear
 def play_leftbinaural(base_freq):
     left = Sine(freq=base_freq, mul=0.1).out()
     return left
@@ -40,6 +41,8 @@ def play_rightbinaural(base_freq,binaural_freq):
 
 
 ''' QRS sonification '''
+notes = [60,62,64,65,67,69,71,72]
+
 # function to map QRS data to a melody 
 def mapping(qrs_data, notes):
     events=[]
@@ -65,15 +68,16 @@ def mapping(qrs_data, notes):
             pass
     return events
 
+# used to convert notes to their corresponding frequency 
 def midiToHz(midi_note):
     return 440 * 2 ** ((midi_note - 69) / 12)
-       
+
+# synthesises the final melody  
 def playQRS(melody_events):
     for note in melody_events:
-        freq = note
+        freq = midiToHz(note)
         osc = Sine(freq=freq, mul=1)
     return osc 
-
 
 
 ''' gong sounds '''
@@ -96,7 +100,7 @@ def update_gong_met():
     gong_met_time.setValue(next_interval)
     gong_met.setTime(next_interval)
     xfade.play()
-    gong_player.out()
+    #gong_player.out()
 
 gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
 trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
@@ -122,7 +126,7 @@ def update_chime_amplitude():
     idx = int(beat_count.get())
     amp = r_peaks[idx]
     chime_player.setMul(amp)  # update the amplitude
-    chime_player.out()
+    #chime_player.out()
 
 trig_update_amplitude = TrigFunc(chime_met, update_chime_amplitude)
 
@@ -135,12 +139,12 @@ binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
 
 # map QRS data to melody events + play QRS sounds 
 melody_events = mapping(QRS_data, notes)
-QRS_sonified = playQRS(melody_events).out()
+#QRS_sonified = playQRS(melody_events).out()
 
 # play gong sounds
-gong_sounds = trig_update_gongmet.out()
+#gong_sounds = trig_update_gongmet.out()
 
 # play chime sounds
-chime_sounds = trig_update_amplitude.out()
+#chime_sounds = trig_update_amplitude.out()
 s.gui(locals())
 
