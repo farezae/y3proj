@@ -29,7 +29,6 @@ async def run_ble_client(device, queue):
     identified by device, starts ECG notification and pushes the ECG 
     data to the queue. The tasks terminates when the sensor disconnects 
     or the user hits enter. """
-
     
     def keyboard_handler():
         """ Called by the asyncio loop when the user hits Enter """
@@ -94,6 +93,7 @@ async def run_consumer_task(queue):
     print("('ECG', tstamp, [s1,S2,...,sn])")
     print("where samples s1,...sn are in microVolt, tstamp is in ns")
     print("and it refers to the last sample sn.")
+
     while True:
         frame = await queue.get()
         if frame[0]=='QUIT':   # intercept exit signal
