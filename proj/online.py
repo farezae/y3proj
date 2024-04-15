@@ -15,6 +15,7 @@ import pandas as pd
 import neurokit2 as nk
 import re
 
+from pyo import *
 from scipy.signal import find_peaks
 from bleak import BleakScanner, BleakClient
 # Allow importing bleakheart from parent directory
@@ -77,7 +78,7 @@ async def run_ble_client(device, ecgqueue,hrqueue):
         loop.add_reader(sys.stdin, keyboard_handler)
         print(">>> Hit Enter to exit <<<")
 
-        heartrate = HeartRate(client, hrqueue=hrqueue,
+        heartrate = HeartRate(client, queue=hrqueue,
                     instant_rate=INSTANT_RATE,
                     unpack=UNPACK)
         
@@ -114,20 +115,31 @@ async def run_consumer_task(ecgqueue,hrqueue,ecg_outqueue,rr_outqueue):
     print("where samples s1,...sn are in microVolt, tstamp is in ns")
     print("and it refers to the last sample sn.")
 
+    ecg_frames_list = [] 
+    hr_frames_list = []
+
     while True:
+        '''print (ecg_frames_list)
+        print (hr_frames_list)'''
+
         ecg_frame = await ecgqueue.get()
         hr_frame = await hrqueue.get()
         
         if (ecg_frame[0]=='QUIT'):   # intercept exit signal
             break
 
-        processed_ecg_data = ecg_signalprocessing(ecg_frame)
-        processed_rr_data = rr_signalprocessing(hr_frame)
+        # continuosly append frames to individual lists 
+        ecg_frames_list.append(ecg_frame)
+        hr_frames_list.append(hr_frame)
+        
+        # once lists reach a big enough size, allow them to undergo signal processing
+        if (len(ecg_frames_list) >= 10) and (len(hr_frames_list) >=10): 
+            processed_ecg_data = ecg_signalprocessing(ecg_frames_list)
+            processed_rr_data = rr_signalprocessing(hr_frames_list)
 
-        print(" ecg: ", processed_ecg_data)
-        print (" hr: ", processed_rr_data)
-
-
+            # clear the lists once signal processing is complete
+            ecg_frames_list.clear()
+            hr_frames_list.clear()
 
         
 async def main():
@@ -147,7 +159,7 @@ async def main():
     # producer task will return when the user hits enter or the
     # sensor disconnects
     producer=run_ble_client(device, ecgqueue,hrqueue)
-    consumer=run_consumer_task(ecgqueue, hrqueue)
+    consumer=run_consumer_task(ecgqueue, hrqueue,ecg_outqueue,rr_outqueue)
 
 
     # wait for the two tasks to exit
@@ -156,35 +168,36 @@ async def main():
 
 
 
-async def push_out(ecg_outqueue,rr_outqueue): 
-    while True: 
-        ecg_items = await ecg_outqueue.get() 
-        rr_items = await rr_outqueue.get()
-
-        if ecg_items and rr_items > 0: 
-            melodyGeneration(ecg_items, rr_items)
-
-
-def melodyGeneration(ecg,rr):
-    pass
-
 def rr_signalprocessing(data):
-    return (data[2][1])
+    # declare empty array 'arr' to store final values 
+    arr=np.array([])
+
+    # clean, convert and standardise values
+    clean_rr_data = re.sub(r'[^\d.\s]', '', str([rrdata[0] for label, timestamp, rrdata,none in data]))
+    conversion = np.array([float(num) for num in clean_rr_data.split()])
+
+    # add values to 'arr' 
+    arr = np.append(arr,conversion)
+
+    # return values as dictionary for accessibilitty 
+    return {
+        "RR Intervals": arr
+        } 
 
 def ecg_signalprocessing(data):
+    # declare empty array 'arr' to store final values 
     arr=np.array([])
-    offsets=[0]
-    times=[]
 
-    clean = re.sub(r'[^\d.\s]', '', data['ecg'])
-    conversion = np.array([float(num) for num in clean.split()])
+    # clean, convert and standardise values
+    clean_ecg_data =  re.sub(r'[^\d.\s]', '', str([ecgdata for label, timestamp, ecgdata in data]))
+    conversion = np.array([float(num) for num in clean_ecg_data.split()])
 
     # create numpy arrays that contain data and timestamps seperately 
     arr = np.append(arr,conversion)
-    offsets.append(len(arr))
-    times.append(data['time'])
 
-    signals, info = nk.ecg_process(arr, sampling_rate=50,method='neurokit')
+    # assign value to sampling rate + process signals using neurokit package 
+    samplingrate=50 
+    signals, info = nk.ecg_process(arr, sampling_rate=samplingrate,method='neurokit')
 
     qrs_durations = []
     r_peaks = info['ECG_R_Peaks']
@@ -198,14 +211,14 @@ def ecg_signalprocessing(data):
         s = min([s for s in s_peaks if s > r], default=None)
 
         if q is not None and s is not None:
-            # Calculate the QRS duration in terms of samples
+            # calculate the QRS duration in terms of samples
             qrs_duration_samples = s - q
 
-            # Convert samples to time using sampling rate
-            qrs_duration_seconds = qrs_duration_samples / 50  # Sampling rate
+            # convert samples to time using sampling rate formula
+            qrs_duration_seconds = qrs_duration_samples / samplingrate  # Sampling rate
             qrs_durations.append(qrs_duration_seconds)
 
-
+    # return items as dictionary for accessibility 
     return{
         "R Peaks": r_peaks,
         "Q Peaks": q_peaks,
@@ -214,8 +227,131 @@ def ecg_signalprocessing(data):
         }
 
 
+def melodyGeneration(ecg_data,rr_data):
+    s = Server().boot().start()
+    osc= Sine()
+
+    ''' binaural beat '''
+    # creating two slightly different sine waves for each ear
+    # base frequency in Hz 
+    def play_leftbinaural(base_freq):
+        left = Sine(freq=base_freq, mul=2).out()
+        return left
+
+    # binaural freq. for anxiety/stress relief, alpha freq. lie between 8-13Hz
+    def play_rightbinaural(base_freq,binaural_freq):    
+        right = Sine(freq=base_freq + binaural_freq, mul=1).out()
+        return right 
 
 
+    ''' QRS sonification '''
+    # function to map QRS data to a melody 
+    def mapping(qrs_data, notes=[60,62,64,65,67,69,71,72]):
+        events=[]
+        for item in qrs_data:
+            # 8 notes, 0.1-0.005/8=0.011875
+            if item <= 0.125:
+                events.append(notes[0])
+            elif 0.125 < item <= 0.25:
+                events.append(notes[1])
+            elif 0.25 < item <= 0.375:
+                events.append(notes[2])
+            elif 0.375 < item <= 0.5:
+                events.append(notes[3])
+            elif 0.5 < item <= 0.625:
+                events.append(notes[4])
+            elif 0.625 < item <= 0.75:
+                events.append(notes[5])
+            elif 0.75 < item <= 0.875:
+                events.append(notes[6])
+            elif 0.875 < item <= 1:
+                events.append(notes[7])
+            else: 
+                events.append(notes[4]) # median duration
+        return events
+
+    # used to convert notes to their corresponding frequency 
+    def midiToHz(midi_note):
+        return 440 * 2 ** ((midi_note - 69) / 12)
+
+    # synthesises the final melody  
+    def playQRS(melody_events):
+        global osc
+        for note in melody_events:
+            freq = midiToHz(note)
+            osc= Sine(freq=freq, mul=0.5)
+        return osc
+
+
+    ''' gong sounds '''
+    def gongSounds(data):
+        rr_intervals = [value + 3.5 for value in data['RR Values']]
+        rr_mean = np.mean(data['RR Values'])
+        rr_sd = np.std(data['RR Values'])
+
+        # path to the gong sound file
+        gong_file_path = "sounds/gong.wav"
+
+        # metro objects + counter definition 
+        gong_met_time = SigTo(rr_intervals[0], time=float(rr_mean))
+        gong_met = Metro(time=gong_met_time).out()
+        beat_count_gong = Counter(gong_met)
+
+
+        # function to update Metro time
+        def update_gong_met():
+            next_interval = rr_intervals[int(beat_count_gong.get()) % len(rr_intervals)]
+            gong_met_time.setValue(next_interval)
+            gong_met.setTime(next_interval)
+            xfade.play()
+            gong_player.out()
+
+        gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
+        trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
+        gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4).out()
+        xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+
+        return trig_update_gongmet
+
+    ''' chime sounds '''
+    def chimeSounds(data):
+        # path to the chime sound file
+        chime_file_path = "sounds/tinkle.wav"
+
+        # metro object to trigger 
+        chime_met_time = SigTo(value=1.75, time=0.1)  # smooth transition for metro time changes
+        chime_met = Metro(time=chime_met_time ).out() 
+
+        # counter to iterate over r_peaks
+        beat_count_chime = Counter(chime_met, min=0, max=len(data['R Peaks']) - 1)
+        # chime player
+        chime_player = SfPlayer(chime_file_path, speed=0.75, loop=False, mul=0)
+
+        # function to update amplitude based on r_peaks
+        def update_chime_amplitude():
+            idx = int(beat_count_chime.get())
+            amp  = float((data['R Peaks'])[idx])
+            chime_player.setMul(amp/100)  # update the amplitude
+            chime_player.out()
+
+        trig_update_amplitude = TrigFunc(chime_met, update_chime_amplitude)
+        return trig_update_amplitude
+
+    ''' play sounds '''
+    # play binaural beat
+    binaural_leftbeat = play_leftbinaural(base_freq=40).out()
+    binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
+
+    # map QRS data to melody events + play QRS sounds 
+    melody_events = mapping(ecg_data['QRS Durations'], notes=[60,62,64,65,67,69,71,72])
+    QRS_sonified = playQRS(melody_events).out()
+
+    # play gong sounds
+    gong_sounds = gongSounds(rr_data).out()
+
+    # play chime sounds
+    chime_sounds = chimeSounds(ecg_data).out()
+    s.gui(locals())
 
 # execute the main coroutine
 asyncio.run(main())
