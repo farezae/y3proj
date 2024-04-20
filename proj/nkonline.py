@@ -28,6 +28,10 @@ from bleakheart import HeartRate
 UNPACK = True
 INSTANT_RATE= UNPACK and True
 
+class EarlyReturnException(Exception):
+    """Custom exception to handle early returns in sound processing."""
+    pass
+
 async def scan():
     """ Scan for a Polar device. """
     device= await BleakScanner.find_device_by_filter(
@@ -307,8 +311,8 @@ def melodyGeneration(ecgdata,rrdata):
                 gong_player.stop()  # Stop playing once all intervals are processed
                 gong_met.stop()  # Stop the metro object
                 s.stop()
-                print ("gong is returning")
-                return
+                raise EarlyReturnException("Early exit from gongSounds.")
+            
 
             else:
                 next_interval = float(rr_intervals[idx]/10)
@@ -326,7 +330,6 @@ def melodyGeneration(ecgdata,rrdata):
         
 
         return trig_update_gongmet
-        return 
 
     ''' chime sounds '''
     def chimeSounds(data):
@@ -362,42 +365,34 @@ def melodyGeneration(ecgdata,rrdata):
         
 
         return trig_update_amplitude 
-        return 
 
     
     def playSounds(s,ecgdata,rrdata):
-
         print ("reached starting point!")
+        try:
+            s.start()
+            ''' play sounds '''
+            # play binaural beat
+            #binaural_leftbeat = play_leftbinaural(base_freq=40).out()
+            #binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
 
-        ''' play sounds '''
-        # play binaural beat
-        #binaural_leftbeat = play_leftbinaural(base_freq=40).out()
-        #binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
+            # map QRS data to melody events + play QRS sounds 
+            #QRS_sonified = playQRS(ecgdata).out()
 
-        # map QRS data to melody events + play QRS sounds 
-        #QRS_sonified = playQRS(ecgdata).out()
+            # play gong sounds
+            gong_sounds = gongSounds(s,rrdata).out()
 
-        # play gong sounds
-        gong_sounds = gongSounds(s,rrdata).out()
+            # play chime sounds
+            chime_sounds = chimeSounds(ecgdata).out()
+            s.gui()
 
-        # play chime sounds
-        chime_sounds = chimeSounds(ecgdata).out()
+        except EarlyReturnException as e:
+            print ("gong has returned")
 
-        print ("chime has returned")
-        print ("gong has returned")
-
-        s.gui()
-
-
-    
-    s.start()
-    while ((bool(s.start())) == True): 
-        playSounds(s,ecgdata,rrdata)
-
-        if ((bool(s.stop))==True):
-            break
-    
-    print ("we've made it out the function!")
-    #s.closeGui()
-
+    playSounds(s,ecgdata,rrdata)
     return 
+
+
+
+# execute the main coroutine
+asyncio.run(main())

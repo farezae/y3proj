@@ -11,9 +11,9 @@ from appJar import gui
 
 
 ''' pre requisites '''
-file_path_qrs = 'qrsdata.csv'  # Adjust the path as necessary
+file_path_qrs = 'testdata/02ecgdata.csv'  # Adjust the path as necessary
 qrsdata = pd.read_csv(file_path_qrs)
-file_path_rr='rrdata.csv'
+file_path_rr='testdata/02rrdata.csv'
 rrdata=pd.read_csv(file_path_rr)
 
 arr=np.array([])
@@ -73,7 +73,7 @@ def signalProcessing(data,arr,offsets,times):
 # creating two slightly different sine waves for each ear
 # base frequency in Hz 
 def play_leftbinaural(base_freq):
-    left = Sine(freq=base_freq, mul=2).out()
+    left = Sine(freq=base_freq, mul=0.5).out()
     return left
 
 # binaural freq. for anxiety/stress relief, alpha freq. lie between 8-13Hz

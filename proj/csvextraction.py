@@ -15,6 +15,25 @@ from matplotlib.animation import FuncAnimation
 from matplotlib import style
 from itertools import count
 
+import sys
+import asyncio
+import numpy as np
+import pandas as pd
+import neurokit2 as nk
+import re
+
+from pyo import *
+from scipy.signal import find_peaks
+from collections import deque
+from bleak import BleakScanner, BleakClient
+# Allow importing bleakheart from parent directory
+sys.path.append('../')
+from bleakheart import PolarMeasurementData 
+from bleakheart import HeartRate
+
+# INSTANT_RATE is unsupported when UNPACK is False
+UNPACK = True
+INSTANT_RATE= UNPACK and True
 
 async def scan():
     """ Scan for a Polar device. """
@@ -24,12 +43,11 @@ async def scan():
 
 
 
-async def run_ble_client(device, queue):
+async def run_ble_client(device, ecgqueue,hrqueue):
     """ This task connects to the BLE server (the heart rate sensor)
     identified by device, starts ECG notification and pushes the ECG 
     data to the queue. The tasks terminates when the sensor disconnects 
     or the user hits enter. """
-
     
     def keyboard_handler():
         """ Called by the asyncio loop when the user hits Enter """
@@ -47,42 +65,53 @@ async def run_ble_client(device, queue):
     # we use this event to signal the end of the client task
     quitclient=asyncio.Event()
     print(f"Connecting to {device}...")
+
+
+
     # the context manager will handle connection/disconnection for us
     async with BleakClient(device, disconnected_callback=
                            disconnected_callback) as client:
         print(f"Connected: {client.is_connected}")
-        # create the Polar Measurement Data object; set queue for
-        # ecg data
-        pmd=PolarMeasurementData(client, ecg_queue=queue)
-        # ask about ACC settings
-        settings=await pmd.available_settings('ECG')
+
+
+        pmd=PolarMeasurementData(client, ecg_queue=ecgqueue) # create the Polar Measurement Data object; set queue for ecg data
+        settings=await pmd.available_settings('ECG')  # ask about ACC settings
         print("Request for available ECG settings returned the following:")
         for k,v in settings.items():
             print(f"{k}:\t{v}")
+
         # Set the loop to call keyboard_handler when one line of input is
         # ready on stdin
         loop=asyncio.get_running_loop()
         loop.add_reader(sys.stdin, keyboard_handler)
         print(">>> Hit Enter to exit <<<")
-        # start notifications; bleakheart will start pushing
-        # data to the queue we passed to PolarMeasurementData
+
+        heartrate = HeartRate(client, queue=hrqueue,
+                    instant_rate=INSTANT_RATE,
+                    unpack=UNPACK)
+        
+        # start notifications for ecg; bleakheart will start pushing data to the queue we passed to PolarMeasurementData
         (err_code, err_msg, _)= await pmd.start_streaming('ECG')
         if err_code!=0:
             print(f"PMD returned an error: {err_msg}")
             sys.exit(err_code)
-        # this task does not need to do anything else; wait until
-        # user hits enter or the sensor disconnects
+      
+        # start notifications for hr; bleakheart will start pushing data to the queue
+        await heartrate.start_notify()
+
         await quitclient.wait()
-        # no need to stop notifications if we are exiting the context
-        # manager anyway, as they will disconnect the client; however,
-        # it's easy to stop them if we want to
         if client.is_connected:
             await pmd.stop_streaming('ECG')
+            await heartrate.stop_notify()
         loop.remove_reader(sys.stdin)
-        # signal the consumer task to quit
-        queue.put_nowait(('QUIT', None, None, None))
 
-async def run_consumer_task(queue):
+        # signal the consumer task to quit
+        ecgqueue.put_nowait(('QUIT', None, None, None))
+        hrqueue.put_nowait(('QUIT', None, None, None))
+
+
+
+async def run_consumer_task(ecgqueue,hrqueue):
     """ This task retrieves ECG data from the queue and does 
     all the processing. You should ensure it returns control before 
     the next frame is received from the sensor. 
@@ -94,26 +123,46 @@ async def run_consumer_task(queue):
     print("where samples s1,...sn are in microVolt, tstamp is in ns")
     print("and it refers to the last sample sn.")
 
-    fieldnames = ["time", "ecg"]
-    with open('rawdata.csv', 'w') as csv_file:
-            csv_writer = csv.DictWriter(csv_file,fieldnames=fieldnames)
+ 
+    ecgfieldnames = ["time", "ecg"]
+    with open('02ecgdata.csv', 'w') as csv_file:
+            csv_writer = csv.DictWriter(csv_file,fieldnames=ecgfieldnames)
             csv_writer.writeheader()
-            
+
+    rrfieldnames = ["time", "rr"]
+    with open('02rrdata.csv', 'w') as csv_file:
+            csv_writer = csv.DictWriter(csv_file,fieldnames=rrfieldnames)
+            csv_writer.writeheader()   
+           
     while True:
-        frame = await queue.get()
-        if frame[0]=='QUIT':   # intercept exit signal
+        ecg_frame = await ecgqueue.get()
+        hr_frame = await hrqueue.get()
+ 
+        if ecg_frame[0]=='QUIT':   # intercept exit signal
             break
             
 
-        with open('rawdata.csv', 'a') as csv_file:
-            csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        with open('02ecgdata.csv', 'a') as csv_file:
+            csv_writer = csv.DictWriter(csv_file, fieldnames=ecgfieldnames)
 
             info = {
-                "time": frame[1],
-                "ecg": frame[2],
+                "time": ecg_frame[1],
+                "ecg": ecg_frame[2],
             }
 
             csv_writer.writerow(info)
+
+        with open('02rrdata.csv', 'a') as csv_file:
+            csv_writer = csv.DictWriter(csv_file, fieldnames=rrfieldnames)
+
+            info = {
+                "time": ecg_frame[1],
+                "rr": ecg_frame[2][1],
+            }
+
+            csv_writer.writerow(info)
+
+        
 
 
         
@@ -128,15 +177,17 @@ async def main():
     # the queue needs to be long enough to cache all the frames, since
     # PolarMeasurementData uses put_nowait
     ecgqueue=asyncio.Queue()
+    hrqueue=asyncio.Queue()
+
     # producer task will return when the user hits enter or the
     # sensor disconnects
-    producer=run_ble_client(device, ecgqueue)
-    consumer=run_consumer_task(ecgqueue)
+    producer=run_ble_client(device, ecgqueue,hrqueue)
+    consumer=run_consumer_task(ecgqueue, hrqueue)
+
 
     # wait for the two tasks to exit
     await asyncio.gather(producer, consumer)
     print("Bye.")
-
 
 # execute the main coroutine
 asyncio.run(main())
