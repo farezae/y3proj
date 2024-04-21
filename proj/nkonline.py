@@ -121,6 +121,7 @@ async def run_consumer_task(ecgqueue,hrqueue):
     ecg_frames_list = [] 
     hr_frames_list = []
     
+    s = Server().boot()
     while True:
         ecg_frame = await ecgqueue.get()
         hr_frame = await hrqueue.get()
@@ -138,7 +139,7 @@ async def run_consumer_task(ecgqueue,hrqueue):
             processed_ecg_data = ecg_signalprocessing(ecg_frames_list)
             processed_rr_data = rr_signalprocessing(hr_frames_list[:5])
 
-            melodyGeneration(processed_ecg_data,processed_rr_data)  
+            melodyGeneration(s,processed_ecg_data,processed_rr_data)  
 
             # clear the lists once signal processing is complete
             ecg_frames_list.clear()
@@ -227,8 +228,7 @@ def ecg_signalprocessing(data):
         }
 
 
-def melodyGeneration(ecgdata,rrdata):
-    s = Server().boot()
+def melodyGeneration(s,ecgdata,rrdata):
     osc= Sine()
     
     ''' binaural beat '''
@@ -287,49 +287,50 @@ def melodyGeneration(ecgdata,rrdata):
     ''' gong sounds '''
     def gongSounds(s,data):
         rr_intervals = data["RR Intervals"]
-        print (rr_intervals)
-        rr_mean = np.mean(data['RR Intervals'])
         initial = rr_intervals[0]
+        should_stop=[False]
 
-
+        print (rr_intervals)
         # path to the gong sound file
         gong_file_path = "sounds/gong.wav"
 
-        # metro objects + counter definition 
-        gong_met_time = SigTo(float(initial), time=float(initial/10))
-        gong_met = Metro(time=gong_met_time).out()
+        try: 
+            # metro objects + counter definition 
+            gong_met_time = SigTo(float(initial), time=float(initial/10))
+            gong_met = Metro(time=gong_met_time).out()
 
-        beat_count_gong = Counter(gong_met,min=0, max=len(rr_intervals))
-        gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
+            beat_count_gong = Counter(gong_met,min=0, max=len(rr_intervals))
+            gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
 
-        # function to update Metro time
-        def update_gong_met():
-            idx = int(beat_count_gong.get())
-            print ("updating time: ", rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
-            if idx == (len(rr_intervals)-1):
-                print ("gong data has run out!!")
-                gong_player.stop()  # Stop playing once all intervals are processed
-                gong_met.stop()  # Stop the metro object
-                s.stop()
-                raise EarlyReturnException("Early exit from gongSounds.")
+            # function to update Metro time
+            def update_gong_met():
+                idx = int(beat_count_gong.get())
+                print ("updating time: ", rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
+                if idx == (len(rr_intervals)-1):
+                    print ("gong data has run out!!")
+                    gong_player.stop()  # Stop playing once all intervals are processed
+                    gong_met.stop()  # Stop the metro object
+                    s.stop()
+                    #raise EarlyReturnException("Early exit from gongSounds.") 
             
+                else:
+                    next_interval = float(rr_intervals[idx]/10)
+                    gong_met_time.setValue(next_interval)
+                    gong_met.setTime(next_interval)
+                    xfade.play()
+                    gong_reverb.play()
+                    gong_player.out()
 
-            else:
-                next_interval = float(rr_intervals[idx]/10)
-                gong_met_time.setValue(next_interval)
-                gong_met.setTime(next_interval)
-                xfade.play()
-                gong_reverb.play()
-                gong_player.out()
 
-        
-        gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4)
-        xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+            gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4)
+            xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+            trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
 
-        trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
-        
+            return trig_update_gongmet
 
-        return trig_update_gongmet
+        except EarlyReturnException as e:
+            print(f"Exception in gongSounds: {str(e)}")
+            return
 
     ''' chime sounds '''
     def chimeSounds(data):
@@ -362,7 +363,6 @@ def melodyGeneration(ecgdata,rrdata):
                 chime_player.setMul(amp / 100)  # update the amplitude
                 chime_player.out()
         trig_update_amplitude = TrigFunc(chime_met, update_chime_amplitude)
-        
 
         return trig_update_amplitude 
 
