@@ -16,8 +16,8 @@ import neurokit2 as nk
 import re
 
 from pyo import *
+from signal import sigwait, SIGINT
 from scipy.signal import find_peaks
-from collections import deque
 from bleak import BleakScanner, BleakClient
 # Allow importing bleakheart from parent directory
 sys.path.append('../')
@@ -122,6 +122,10 @@ async def run_consumer_task(ecgqueue,hrqueue):
     hr_frames_list = []
     
     s = Server().boot()
+    s.deactivateMidi()
+    s.boot()
+    s.start()
+
     while True:
         ecg_frame = await ecgqueue.get()
         hr_frame = await hrqueue.get()
@@ -136,14 +140,23 @@ async def run_consumer_task(ecgqueue,hrqueue):
         
         # once lists reach a big enough size, allow them to undergo signal processing
         if (len(ecg_frames_list) >= 10) and (len(hr_frames_list) >= 10): 
-            processed_ecg_data = ecg_signalprocessing(ecg_frames_list)
-            processed_rr_data = rr_signalprocessing(hr_frames_list[:5])
+            ecg_processing = asyncio.create_task(ecg_signalprocessing(ecg_frames_list))
+            rr_processing = asyncio.create_task(rr_signalprocessing(hr_frames_list))
 
-            melodyGeneration(s,processed_ecg_data,processed_rr_data)  
+            processed_ecg_data = await ecg_processing
+            processed_rr_data = await rr_processing
+
+            melodygenerator = asyncio.create_task(melodyGeneration(s,processed_ecg_data,processed_rr_data))
+            await asyncio.sleep(0)   
+        
 
             # clear the lists once signal processing is complete
             ecg_frames_list.clear()
             hr_frames_list.clear()
+    
+    sigwait([SIGINT])
+    s.stop()
+    s.shutdown()
          
 
         
@@ -169,7 +182,7 @@ async def main():
     print("Bye.")
 
 
-def rr_signalprocessing(data):
+async def rr_signalprocessing(data):
     # declare empty array 'arr' to store final values 
     arr=np.array([])
 
@@ -185,7 +198,7 @@ def rr_signalprocessing(data):
         "RR Intervals": arr
         } 
 
-def ecg_signalprocessing(data):
+async def ecg_signalprocessing(data):
     # declare empty array 'arr' to store final values 
     arr=np.array([])
 
@@ -228,7 +241,7 @@ def ecg_signalprocessing(data):
         }
 
 
-def melodyGeneration(s,ecgdata,rrdata):
+async def melodyGeneration(s,ecgdata,rrdata):
     osc= Sine()
     
     ''' binaural beat '''
@@ -288,49 +301,43 @@ def melodyGeneration(s,ecgdata,rrdata):
     def gongSounds(s,data):
         rr_intervals = data["RR Intervals"]
         initial = rr_intervals[0]
-        should_stop=[False]
 
         print (rr_intervals)
         # path to the gong sound file
         gong_file_path = "sounds/gong.wav"
 
-        try: 
-            # metro objects + counter definition 
-            gong_met_time = SigTo(float(initial), time=float(initial/10))
-            gong_met = Metro(time=gong_met_time).out()
+        # metro objects + counter definition 
+        gong_met_time = SigTo(float(initial), time=float(initial/10))
+        gong_met = Metro(time=gong_met_time).out()
 
-            beat_count_gong = Counter(gong_met,min=0, max=len(rr_intervals))
-            gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
+        beat_count_gong = Counter(gong_met,min=0, max=len(rr_intervals))
+        gong_player = SfPlayer(gong_file_path, speed=1.5, mul=0.5, loop=False)
 
-            # function to update Metro time
-            def update_gong_met():
-                idx = int(beat_count_gong.get())
-                print ("updating time: ", rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
-                if idx == (len(rr_intervals)-1):
-                    print ("gong data has run out!!")
-                    gong_player.stop()  # Stop playing once all intervals are processed
-                    gong_met.stop()  # Stop the metro object
-                    s.stop()
-                    #raise EarlyReturnException("Early exit from gongSounds.") 
-            
-                else:
-                    next_interval = float(rr_intervals[idx]/10)
-                    gong_met_time.setValue(next_interval)
-                    gong_met.setTime(next_interval)
-                    xfade.play()
-                    gong_reverb.play()
-                    gong_player.out()
+        # function to update Metro time
+        def update_gong_met():
+            idx = int(beat_count_gong.get())
+            print ("updating time: ", rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
+            if idx == (len(rr_intervals)-1):
+                print ("gong data has run out!!")
+                gong_player.stop()  # Stop playing once all intervals are processed
+                gong_met.stop()  # Stop the metro object
+                s.stop()
+                #raise EarlyReturnException("Early exit from gongSounds.") 
+        
+            else:
+                next_interval = float(rr_intervals[idx]/10)
+                gong_met_time.setValue(next_interval)
+                gong_met.setTime(next_interval)
+                xfade.play()
+                gong_reverb.play()
+                gong_player.out()
 
 
-            gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4)
-            xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
-            trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
+        gong_reverb = Freeverb(gong_player.mix(2), size=0.9, damp=0.4, bal=0.4)
+        xfade = Fader(fadein=0.5, fadeout=0.5, dur=0, mul=1) # crossfade envelope
+        trig_update_gongmet = TrigFunc(gong_met, update_gong_met)
 
-            return trig_update_gongmet
-
-        except EarlyReturnException as e:
-            print(f"Exception in gongSounds: {str(e)}")
-            return
+        return trig_update_gongmet
 
     ''' chime sounds '''
     def chimeSounds(data):
@@ -369,28 +376,26 @@ def melodyGeneration(s,ecgdata,rrdata):
     
     def playSounds(s,ecgdata,rrdata):
         print ("reached starting point!")
-        try:
-            s.start()
-            ''' play sounds '''
-            # play binaural beat
-            #binaural_leftbeat = play_leftbinaural(base_freq=40).out()
-            #binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8).out()
 
-            # map QRS data to melody events + play QRS sounds 
-            #QRS_sonified = playQRS(ecgdata).out()
+        ''' play sounds '''
+        # play binaural beat
+        binaural_leftbeat = play_leftbinaural(base_freq=40)
+        binaural_rightbeat = play_rightbinaural(base_freq=40, binaural_freq=8)
 
-            # play gong sounds
-            gong_sounds = gongSounds(s,rrdata).out()
+        # map QRS data to melody events + play QRS sounds 
+        QRS_sonified = playQRS(ecgdata)
 
-            # play chime sounds
-            chime_sounds = chimeSounds(ecgdata).out()
-            s.gui()
+        # play gong sounds
+        gong_sounds = gongSounds(s,rrdata)
 
-        except EarlyReturnException as e:
-            print ("gong has returned")
+        # play chime sounds
+        chime_sounds = chimeSounds(ecgdata)
 
-    playSounds(s,ecgdata,rrdata)
-    return 
+        print ("reached end")
+        return gong_sounds, chime_sounds, binaural_leftbeat, binaural_rightbeat, QRS_sonified
+
+    return playSounds(s,ecgdata,rrdata)
+    
 
 
 
