@@ -121,17 +121,19 @@ async def run_consumer_task(ecgqueue,hrqueue):
     ecg_frames_list = [] 
     hr_frames_list = []
     
+
     s = Server().boot()
     s.deactivateMidi()
     s.boot()
     s.start()
 
     while True:
+        # get ecg/hr frames from ble_client
         ecg_frame = await ecgqueue.get()
         hr_frame = await hrqueue.get()
         
-        
-        if (ecg_frame[0]=='QUIT'):   # intercept exit signal
+        # intercept exit signal
+        if (ecg_frame[0]=='QUIT'):   
             break
 
         # continuosly append frames to individual lists 
@@ -140,13 +142,19 @@ async def run_consumer_task(ecgqueue,hrqueue):
         
         # once lists reach a big enough size, allow them to undergo signal processing
         if (len(ecg_frames_list) >= 10) and (len(hr_frames_list) >= 10): 
+
+            # create asynchronus tasks to run signal processing on both ecg&hr frames
             ecg_processing = asyncio.create_task(ecg_signalprocessing(ecg_frames_list))
             rr_processing = asyncio.create_task(rr_signalprocessing(hr_frames_list))
 
+            # await data processing 
             processed_ecg_data = await ecg_processing
             processed_rr_data = await rr_processing
 
+            # create asynchronus task to run melody generation system in the background 
             melodygenerator = asyncio.create_task(melodyGeneration(s,processed_ecg_data,processed_rr_data))
+
+            # give the melodygeneration background task some time to start running 
             await asyncio.sleep(0)   
         
 
@@ -154,6 +162,7 @@ async def run_consumer_task(ecgqueue,hrqueue):
             ecg_frames_list.clear()
             hr_frames_list.clear()
     
+    # as opposed to using 's.gui.locals()'
     sigwait([SIGINT])
     s.stop()
     s.shutdown()
