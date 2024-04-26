@@ -257,12 +257,12 @@ async def melodyGeneration(s,ecgdata,rrdata):
     # creating two slightly different sine waves for each ear
     # base frequency in Hz 
     def play_leftbinaural(base_freq):
-        left = Sine(freq=base_freq, mul=0.5).out()
+        left = Sine(freq=base_freq, mul=0.3).out()
         return left
 
     # binaural freq. for anxiety/stress relief, alpha freq. lie between 8-13Hz
     def play_rightbinaural(base_freq,binaural_freq):    
-        right = Sine(freq=base_freq + binaural_freq, mul=1).out()
+        right = Sine(freq=base_freq + binaural_freq, mul=0.4).out()
         return right 
 
 
@@ -302,8 +302,8 @@ async def melodyGeneration(s,ecgdata,rrdata):
         global osc
         for note in melody_events:
             freq = midiToHz(note)
-            osc= Sine(freq=freq, mul=0.5)
-        return osc
+            osc= Sine(freq=freq, mul=0.2)
+        return osc.out()
 
 
     ''' gong sounds '''
@@ -401,7 +401,8 @@ async def melodyGeneration(s,ecgdata,rrdata):
         chime_sounds = chimeSounds(ecgdata)
 
         print ("reached end")
-        return gong_sounds, chime_sounds, binaural_leftbeat, binaural_rightbeat, QRS_sonified
+        
+        return gong_sounds, chime_sounds, binaural_leftbeat, binaural_rightbeat,QRS_sonified
 
     return playSounds(s,ecgdata,rrdata)
     
