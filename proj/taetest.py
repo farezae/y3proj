@@ -1,13 +1,3 @@
-""" 
-This Source Code Form is subject to the terms of the Mozilla Public
-License, v. 2.0. If a copy of the MPL was not distributed with this
-file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
-Copyright (C) 2023 Fabrizio Smeraldi <fabrizio@smeraldi.net>
-"""
-
-""" ECG acquisition using an asynchronous queue - producer/consumer model """
-
 import sys
 import asyncio
 import numpy as np
@@ -21,6 +11,7 @@ import tk_async_execute as tae
 from pyo import *
 from signal import sigwait, SIGINT
 from tkinter import ttk 
+from PIL import Image, ImageTk
 from bleak import BleakScanner, BleakClient
 # Allow importing bleakheart from parent directory
 sys.path.append('../')
@@ -30,8 +21,6 @@ from bleakheart import HeartRate
 # INSTANT_RATE is unsupported when UNPACK is False
 UNPACK = True
 INSTANT_RATE= UNPACK and True
-
-
 
 async def scan():
     """ Scan for a Polar device. """
@@ -173,7 +162,7 @@ async def run_consumer_task(ecgqueue,hrqueue):
          
 
         
-async def main():    
+async def main():
     print("Scanning for BLE devices")
     device=await scan()
     if device==None:
@@ -301,6 +290,7 @@ async def melodyGeneration(s,ecgdata,rrdata):
 
     # synthesises the final melody  
     def playQRS(ecgdata):
+        print ("updating qrs sonfication!")
         melody_events = mapping(ecgdata['QRS Durations'], notes=[60,62,64,65,67,69,71,72])
         global osc
         for note in melody_events:
@@ -328,13 +318,14 @@ async def melodyGeneration(s,ecgdata,rrdata):
         # function to update Metro time
         def update_gong_met():
             idx = int(beat_count_gong.get())
-            print ("updating time: ", rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
+            print ("updating gong interval time! ")
+            #print (rr_intervals[idx]/10, ",comparison: ", idx, " vs", len(rr_intervals)-1)
             if idx == (len(rr_intervals)-1):
-                print ("gong data has run out!!")
+                #print ("gong data has run out!!")
                 gong_player.stop()  # Stop playing once all intervals are processed
                 gong_met.stop()  # Stop the metro object
                 s.stop()
-                #raise EarlyReturnException("Early exit from gongSounds.") 
+                
         
             else:
                 next_interval = float(rr_intervals[idx]/10)
@@ -370,11 +361,12 @@ async def melodyGeneration(s,ecgdata,rrdata):
         # function to update amplitude based on r_peaks
         def update_chime_amplitude():
             idx = int(beat_count_chime.get())
-            print ("updating amplitude: ", data['R Peaks'][idx], ",comparison: ", idx, " vs", len(data['R Peaks'])-1)
+            print ("updating chime amplitude!")
+            #print (data['R Peaks'][idx], ",comparison: ", idx, " vs", len(data['R Peaks'])-1)
             if idx == (len(data['R Peaks'])-1):
-                print ("chime data has run out!!")
+                #print ("chime data has run out!!")
                 chime_met.stop()  # Stop the metro object when data runs out
-                print ("chime is returning")
+                #print ("chime is returning")
                 return 
 
             else:
@@ -387,7 +379,7 @@ async def melodyGeneration(s,ecgdata,rrdata):
 
     
     def playSounds(s,ecgdata,rrdata):
-        print ("reached starting point!")
+        #print ("reached starting point!")
 
         ''' play sounds '''
         # play binaural beat
@@ -403,11 +395,60 @@ async def melodyGeneration(s,ecgdata,rrdata):
         # play chime sounds
         chime_sounds = chimeSounds(ecgdata)
 
-        print ("reached end")
+        #print ("reached end")
         
         return gong_sounds, chime_sounds, binaural_leftbeat, binaural_rightbeat,QRS_sonified
 
     return playSounds(s,ecgdata,rrdata)
 
+def start_button_clicked():
+    # Call async function
+    tae.async_execute(main(), wait=True, visible=True, pop_up=True, callback=None, master=root)
+    root.quit()
 
-asyncio.run(main())
+def close_application():
+    sys.exit
+    root.destroy()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title ("ecg melodies")
+    root.geometry("400x200")  # Set the size of the window
+
+    #load the image with pillow
+    image = Image.open("musical_note.png")
+    note_image = ImageTk.PhotoImage(image)
+
+     # use a frame to add some padding and background color
+    frame = tk.Frame(root, bg='#9370DB', padx=30, pady=30)
+    frame.pack(fill=tk.BOTH, expand=True)
+
+    # add the image to a label and place it on the frame
+    image_label = tk.Label(frame, image=note_image, bg='#9370DB')
+    image_label.pack(side=tk.TOP, expand=True)
+
+     # create a start
+    startbtn = tk.Button(frame, text="start server", command=start_button_clicked,
+                    font=('Helvetica', 14), bg='white', fg='black',
+                    padx=10, pady=10, relief=tk.RAISED, borderwidth=2)
+    startbtn.pack(expand=True)
+
+
+    # bind the window close ('X' button) event with the close_application function
+    root.protocol("WM_DELETE_WINDOW", close_application)
+    # Keep a reference to the image object to prevent it from being garbage collected
+    root.image = note_image
+
+    tae.start()  # starts the asyncio event loop in a different thread.
+    root.mainloop()  # main Tkinter loop
+    tae.stop()  # stops the event loop and closes it.
+
+
+
+
+
+
+
+
+
+
