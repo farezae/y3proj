@@ -420,11 +420,11 @@ if __name__ == "__main__":
     note_image = ImageTk.PhotoImage(image)
 
      # use a frame to add some padding and background color
-    frame = tk.Frame(root, bg='#9370DB', padx=30, pady=30)
+    frame = tk.Frame(root, bg='#ADD8E6', padx=30, pady=30)
     frame.pack(fill=tk.BOTH, expand=True)
 
     # add the image to a label and place it on the frame
-    image_label = tk.Label(frame, image=note_image, bg='#9370DB')
+    image_label = tk.Label(frame, image=note_image, bg='#ADD8E6')
     image_label.pack(side=tk.TOP, expand=True)
 
      # create a start
