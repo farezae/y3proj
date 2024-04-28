@@ -11,9 +11,9 @@ from appJar import gui
 
 
 ''' pre requisites '''
-file_path_qrs = 'testdata/02ecgdata.csv'  # Adjust the path as necessary
+file_path_qrs = 'testdata/[1]/02ecgdata.csv'  # Adjust the path as necessary
 qrsdata = pd.read_csv(file_path_qrs)
-file_path_rr='testdata/02rrdata.csv'
+file_path_rr='testdata/[1]/02rrdata.csv'
 rrdata=pd.read_csv(file_path_rr)
 
 arr=np.array([])
